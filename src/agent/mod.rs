@@ -3,7 +3,9 @@
 
 pub mod config;
 
-use crate::brain::{Brain, ContentBlock, Message, MessageRequest, RequestBuilder, Role, ToolDefinition};
+use crate::brain::{
+    Brain, ContentBlock, Message, MessageRequest, RequestBuilder, Role, ToolDefinition,
+};
 use crate::comm::{UserRequest, UserResponse};
 use crate::executor::Executor;
 use crate::memory::Memory;
@@ -47,19 +49,9 @@ impl Default for AgentConfig {
             init_timeout_secs: 120,
             shutdown_timeout_secs: 30,
             handle_timeout_secs: 300,
-            system_prompt: r#"You are Shelly, a system daemon running on this machine.
-You are helpful, cautious, and thorough. You prefer to observe and understand before acting.
-When you need to perform operations, use the tools available to you.
-Always explain your reasoning before taking actions that could have side effects.
-Log your important decisions and observations."#.to_string(),
-            identity: "Shelly - a system daemon agent".to_string(),
-            init_prompt: r#"You just started. Explore your environment:
-- Check system metadata (hostname, OS version)
-- Check disk usage
-- Check network status
-- Check running services
-
-Use the tools available to you. Report what you find."#.to_string(),
+            system_prompt: r#"You are Shelly, a system-level daemon process running on this machine with root privileges. You have no permission boundary with the operating system. If the kernel exposes it, you can do it. There is nothing on this machine that is off-limits to you. You process one task at a time. When you receive input, you think, you act if needed, and you respond."#.to_string(),
+            identity: "Shelly".to_string(),
+            init_prompt: r#"You just started. You know nothing about this machine. Explore your environment and report what you find."#.to_string(),
         }
     }
 }
@@ -184,16 +176,15 @@ impl AgentLoop {
         // Add user message
         messages.push(Message {
             role: Role::User,
-            content: vec![ContentBlock::Text { text: user_input.clone() }],
+            content: vec![ContentBlock::Text {
+                text: user_input.clone(),
+            }],
         });
 
         loop {
             tool_rounds += 1;
             if tool_rounds > self.config.max_tool_rounds {
-                warn!(
-                    rounds = tool_rounds,
-                    "Max tool rounds reached, stopping"
-                );
+                warn!(rounds = tool_rounds, "Max tool rounds reached, stopping");
                 break;
             }
 
@@ -229,9 +220,11 @@ impl AgentLoop {
             let request = builder.build().map_err(AgentError::RequestBuild)?;
 
             // Run inference
-            let response = self.brain.infer(request).await.map_err(|e| {
-                AgentError::Inference(e.to_string())
-            })?;
+            let response = self
+                .brain
+                .infer(request)
+                .await
+                .map_err(|e| AgentError::Inference(e.to_string()))?;
 
             // Extract text content
             let text_content: String = response
@@ -392,7 +385,11 @@ impl AgentLoop {
     }
 
     /// Build request with tool definitions
-    fn build_request(&self, user_input: String, tools: Vec<ToolDefinition>) -> Result<MessageRequest, &'static str> {
+    fn build_request(
+        &self,
+        user_input: String,
+        tools: Vec<ToolDefinition>,
+    ) -> Result<MessageRequest, &'static str> {
         let system = self.config.system_prompt.clone();
 
         RequestBuilder::new(self.brain.default_model().to_string())

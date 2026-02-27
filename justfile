@@ -104,11 +104,18 @@ completions:
 daemon-start:
     #!/usr/bin/env bash
     set -e
-    cargo run --bin shelly &
-    PID=$!
+    CARGO_PATH=$(which cargo)
+    RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo" sudo -v
+    # Then run in background using a subshell
+    sudo RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo" -- bash -c "$CARGO_PATH run --bin shelly &" &
+    sleep 2
+    PID=$(pgrep -f "shelly" | head -1)
+    if [ -z "$PID" ]; then
+        echo "Failed to start shelly"
+        exit 1
+    fi
     echo "Shelly started with PID: $PID"
     echo $PID > .shelly.pid
-    sleep 1
     echo "Shelly daemon running on port 9700"
 
 # Stop shelly daemon
@@ -122,6 +129,14 @@ daemon-stop:
     else
         echo "Shelly not running (no PID file)"
     fi
+
+# Run shelly in foreground (requires sudo for root privileges)
+run-daemon:
+    #!/usr/bin/env bash
+    set -e
+    CARGO_PATH=$(which cargo)
+    RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo" sudo -v
+    sudo RUSTUP_HOME="$HOME/.rustup" CARGO_HOME="$HOME/.cargo" $CARGO_PATH run --bin shelly
 
 # Run CLI and connect to daemon
 cli:
