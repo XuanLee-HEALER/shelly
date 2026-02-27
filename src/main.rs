@@ -1,79 +1,98 @@
+mod agent;
 mod brain;
 mod comm;
 mod executor;
+mod memory;
 
-use brain::{Brain, BrainConfig, RequestBuilder};
+use agent::{AgentConfig, AgentLoop};
+use brain::Brain;
+use brain::BrainConfig;
 use comm::{Comm, CommConfig};
+use executor::{Executor, ExecutorConfig};
+use std::process;
+use tokio::signal;
+use tracing::{error, info, Level};
 use tracing_subscriber::fmt;
 
+/// Tokio runtime with signal handling
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    fmt().with_max_level(tracing::Level::INFO).init();
+    // Initialize logging with high observability for dev
+    fmt()
+        .with_max_level(Level::DEBUG)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+
+    info!("Starting Shelly daemon...");
+
+    // Initialize config
+    let comm_config = CommConfig::default();
+    let brain_config = BrainConfig::from_env()?;
+    let executor_config = ExecutorConfig::default();
+    let agent_config = AgentConfig::from_env()?;
+
+    info!(
+        comm_port = comm_config.listen_port,
+        model = %brain_config.default_model,
+        "Configuration loaded"
+    );
 
     // Initialize comm
-    let config = CommConfig::default();
-    println!("Comm initialized, listening on 0.0.0.0:{}", config.listen_port);
-
-    let (comm, mut user_rx) = Comm::new(config).await?;
+    let (comm, mut user_rx) = Comm::new(comm_config).await?;
+    info!(addr = %comm.local_addr()?, "Comm initialized");
 
     // Initialize brain
-    let brain_config = BrainConfig::from_env()?;
-    println!("Initializing Brain with model: {}", brain_config.default_model);
     let brain = Brain::new(brain_config).await?;
-    println!("Brain initialized successfully!");
+    info!(model = brain.default_model(), "Brain initialized");
+
+    // Initialize executor
+    let executor = Executor::new(executor_config);
+    info!(tools = executor.tool_definitions().len(), "Executor initialized");
+
+    // Initialize agent loop
+    let agent = AgentLoop::new(brain, executor, agent_config);
 
     // Spawn comm server
-    tokio::spawn(async move {
+    let comm_handle = tokio::spawn(async move {
         if let Err(e) = comm.run().await {
-            eprintln!("Comm error: {}", e);
+            error!(error = %e, "Comm server error");
         }
     });
 
-    // Main loop: handle user requests
-    loop {
-        tokio::select! {
-            Some(req) = user_rx.recv() => {
-                println!("Received request from {}: {}", req.source_addr, req.content);
+    // Run initialization
+    info!("Running agent initialization...");
+    if let Err(e) = agent.run_init().await {
+        error!(error = %e, "Agent initialization failed");
+        process::exit(1);
+    }
 
-                // Process with brain
-                let request = RequestBuilder::new(brain.default_model().to_string())
-                    .system("You are a helpful assistant that responds to user commands.")
-                    .user_text(&req.content)
-                    .max_tokens(brain.max_output_tokens())
-                    .build();
+    // Main loop with signal handling
+    info!("Entering main loop...");
 
-                let response = match request {
-                    Ok(req) => {
-                        match brain.infer(req).await {
-                            Ok(resp) => {
-                                let content = resp.content.iter()
-                                    .filter_map(|block| {
-                                        if let brain::ContentBlock::Text { text } = block {
-                                            Some(text.clone())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("");
-                                comm::UserResponse::new(content)
-                            }
-                            Err(e) => {
-                                comm::UserResponse::error(format!("Brain error: {}", e))
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        comm::UserResponse::error(format!("Request build error: {}", e))
-                    }
-                };
-
-                // Send response back to comm
-                if req.reply.send(response).is_err() {
-                    eprintln!("Failed to send response");
-                }
-            }
+    tokio::select! {
+        // Handle user requests
+        Some(req) = user_rx.recv() => {
+            agent.handle_user_request(req).await;
+        }
+        // Handle Ctrl+C / SIGTERM
+        _ = async {
+            signal::ctrl_c().await.ok();
+        } => {
+            info!("Received shutdown signal");
         }
     }
+
+    // Shutdown handling
+    info!("Starting shutdown...");
+    agent.shutdown().await;
+
+    // Clean up
+    info!("Shutting down...");
+    comm_handle.abort();
+
+    info!("Goodbye!");
+    Ok(())
 }

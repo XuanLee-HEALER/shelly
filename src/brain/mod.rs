@@ -28,6 +28,12 @@ pub struct BrainConfig {
     pub request_timeout_secs: u64,
     /// Maximum output tokens
     pub max_output_tokens: u32,
+    /// Temperature (0.0-2.0, None = use model default)
+    pub temperature: Option<f32>,
+    /// Top-P nucleus sampling (0.0-1.0, None = use model default)
+    pub top_p: Option<f32>,
+    /// Top-K sampling (None = use model default)
+    pub top_k: Option<u32>,
 }
 
 impl BrainConfig {
@@ -61,6 +67,19 @@ impl BrainConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(4096);
 
+        // Inference parameters (optional, use model defaults if not set)
+        let temperature = std::env::var("INFERENCE_TEMPERATURE")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        let top_p = std::env::var("INFERENCE_TOP_P")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        let top_k = std::env::var("INFERENCE_TOP_K")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
         Ok(Self {
             endpoint,
             api_key,
@@ -69,6 +88,9 @@ impl BrainConfig {
             base_retry_delay_ms,
             request_timeout_secs,
             max_output_tokens,
+            temperature,
+            top_p,
+            top_k,
         })
     }
 }

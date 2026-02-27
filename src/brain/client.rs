@@ -42,6 +42,21 @@ impl Brain {
         self.config.max_output_tokens
     }
 
+    /// Get temperature (None = use model default)
+    pub fn temperature(&self) -> Option<f32> {
+        self.config.temperature
+    }
+
+    /// Get top_p (None = use model default)
+    pub fn top_p(&self) -> Option<f32> {
+        self.config.top_p
+    }
+
+    /// Get top_k (None = use model default)
+    pub fn top_k(&self) -> Option<u32> {
+        self.config.top_k
+    }
+
     /// Perform inference
     pub async fn infer(&self, request: MessageRequest) -> Result<MessageResponse, BrainError> {
         info!(
@@ -137,7 +152,9 @@ impl Brain {
         if status.is_success() {
             let body = response.text().await?;
             let body_preview = if body.len() > 200 {
-                format!("{}...", &body[..200])
+                // Use char boundaries instead of byte slicing for UTF-8 safety
+                let chars: String = body.chars().take(200).collect();
+                format!("{}...", chars)
             } else {
                 body.clone()
             };

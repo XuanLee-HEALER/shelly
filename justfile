@@ -100,6 +100,40 @@ size:
 completions:
     cargo run --release -- completions bash > completions.sh
 
+# Start shelly daemon in background (requires .env with INFERENCE_* vars)
+daemon-start:
+    #!/usr/bin/env bash
+    set -e
+    cargo run --bin shelly &
+    PID=$!
+    echo "Shelly started with PID: $PID"
+    echo $PID > .shelly.pid
+    sleep 1
+    echo "Shelly daemon running on port 9700"
+
+# Stop shelly daemon
+daemon-stop:
+    #!/usr/bin/env bash
+    if [ -f .shelly.pid ]; then
+        PID=$(cat .shelly.pid)
+        kill $PID 2>/dev/null || true
+        rm .shelly.pid
+        echo "Shelly stopped"
+    else
+        echo "Shelly not running (no PID file)"
+    fi
+
+# Run CLI and connect to daemon
+cli:
+    #!/usr/bin/env bash
+    set -e
+    cargo run --bin shelly-cli
+
+# Start daemon and run CLI interactively
+dev: daemon-start
+    cargo run --bin shelly-cli
+    just daemon-stop
+
 # Show required environment variables
 env-info:
     @echo "=== Required Environment Variables ==="
