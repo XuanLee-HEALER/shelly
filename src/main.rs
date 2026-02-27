@@ -72,16 +72,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Main loop with signal handling
     info!("Entering main loop...");
 
-    tokio::select! {
-        // Handle user requests
-        Some(req) = user_rx.recv() => {
-            agent.handle_user_request(req).await;
-        }
-        // Handle Ctrl+C / SIGTERM
-        _ = async {
-            signal::ctrl_c().await.ok();
-        } => {
-            info!("Received shutdown signal");
+    loop {
+        tokio::select! {
+            // Handle user requests
+            Some(req) = user_rx.recv() => {
+                agent.handle_user_request(req).await;
+            }
+            // Handle Ctrl+C / SIGTERM
+            _ = async {
+                signal::ctrl_c().await.ok();
+            } => {
+                info!("Received shutdown signal");
+                break;
+            }
         }
     }
 
