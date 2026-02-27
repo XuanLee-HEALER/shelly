@@ -1,4 +1,5 @@
 mod brain;
+mod executor;
 
 use brain::{Brain, BrainConfig, RequestBuilder};
 use tracing_subscriber::fmt;

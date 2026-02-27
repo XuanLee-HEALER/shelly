@@ -1,0 +1,11 @@
+# Tools Configuration
+# Tool descriptions loaded at runtime
+
+[bash]
+description = """
+Execute a shell command via /bin/sh -c.
+The system is Ubuntu 24.04 ARM64.
+Available tools include: systemctl, journalctl, docker, ip, ss, df, free, top, curl, git, cargo.
+Commands run with daemon process privileges.
+Stdout and stderr are captured. Exit code is returned.
+"""
