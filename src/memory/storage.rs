@@ -13,9 +13,10 @@ use tracing::{debug, info};
 const MAX_JOURNAL_ENTRIES: usize = 100;
 
 /// Memory - stores agent's semantic memory and journal
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Memory {
     /// Semantic memory entries
+    #[allow(dead_code)]
     entries: Vec<MemoryEntry>,
     /// Journal entries (backward compatible)
     journal: VecDeque<JournalEntry>,
@@ -24,19 +25,8 @@ pub struct Memory {
     /// Topology (known system structure)
     topology: Vec<String>,
     /// Configuration
+    #[allow(dead_code)]
     config: MemoryConfig,
-}
-
-impl Default for Memory {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            journal: VecDeque::new(),
-            identity: String::new(),
-            topology: Vec::new(),
-            config: MemoryConfig::default(),
-        }
-    }
 }
 
 impl Memory {
@@ -52,6 +42,7 @@ impl Memory {
     }
 
     /// Load memory from disk
+    #[allow(dead_code)]
     pub fn load(config: MemoryConfig) -> Result<Self, MemoryError> {
         let entries_file = config.storage_dir.join("entries.json");
 
@@ -69,8 +60,8 @@ impl Memory {
         let content = fs::read_to_string(&entries_file)
             .map_err(|e| MemoryError::LoadFailed(e.to_string()))?;
 
-        let entries: Vec<MemoryEntry> = serde_json::from_str(&content)
-            .map_err(|e| MemoryError::LoadFailed(e.to_string()))?;
+        let entries: Vec<MemoryEntry> =
+            serde_json::from_str(&content).map_err(|e| MemoryError::LoadFailed(e.to_string()))?;
 
         info!("Loaded {} memory entries", entries.len());
 
@@ -84,12 +75,11 @@ impl Memory {
     }
 
     /// Store a memory entry
+    #[allow(dead_code)]
     pub async fn store(&mut self, entry: MemoryEntry) -> Result<(), MemoryError> {
-        // Ensure directory exists
-        if let Some(parent) = self.config.storage_dir.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| MemoryError::StoreFailed(e.to_string()))?;
-        }
+        // Ensure storage directory exists
+        fs::create_dir_all(&self.config.storage_dir)
+            .map_err(|e| MemoryError::StoreFailed(e.to_string()))?;
 
         // Add entry
         self.entries.push(entry);
@@ -101,14 +91,14 @@ impl Memory {
     }
 
     /// Persist entries to disk
+    #[allow(dead_code)]
     fn persist(&self) -> Result<(), MemoryError> {
         let entries_file = self.config.storage_dir.join("entries.json");
 
         let content = serde_json::to_string_pretty(&self.entries)
             .map_err(|e| MemoryError::StoreFailed(e.to_string()))?;
 
-        fs::write(&entries_file, content)
-            .map_err(|e| MemoryError::StoreFailed(e.to_string()))?;
+        fs::write(&entries_file, content).map_err(|e| MemoryError::StoreFailed(e.to_string()))?;
 
         debug!("Persisted {} memory entries", self.entries.len());
 
@@ -116,6 +106,7 @@ impl Memory {
     }
 
     /// Recall relevant memories by semantic similarity
+    #[allow(dead_code)]
     pub fn recall(&self, _query: &str, query_embedding: &[f32], top_k: usize) -> Vec<MemoryEntry> {
         if self.entries.is_empty() {
             return Vec::new();
@@ -133,10 +124,7 @@ impl Memory {
             .collect();
 
         // Sort by similarity (descending)
-        similarities.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return top-k entries
         similarities
@@ -147,16 +135,19 @@ impl Memory {
     }
 
     /// Get all entries
+    #[allow(dead_code)]
     pub fn entries(&self) -> &[MemoryEntry] {
         &self.entries
     }
 
     /// Get configuration
+    #[allow(dead_code)]
     pub fn config(&self) -> &MemoryConfig {
         &self.config
     }
 
     /// Generate context string from recalled entries
+    #[allow(dead_code)]
     pub fn context_from_recall(&self, entries: &[MemoryEntry]) -> String {
         if entries.is_empty() {
             return String::new();
@@ -186,6 +177,7 @@ impl Memory {
     }
 
     /// Add system info
+    #[allow(dead_code)]
     pub fn add_system_info(&mut self, info: impl Into<String>) {
         self.add(JournalEntry::SystemInfo(info.into()));
     }
@@ -217,6 +209,7 @@ impl Memory {
     }
 
     /// Add topology info
+    #[allow(dead_code)]
     pub fn add_topology(&mut self, info: impl Into<String>) {
         self.topology.push(info.into());
     }
@@ -251,11 +244,13 @@ impl Memory {
     }
 
     /// Get full journal for debugging
+    #[allow(dead_code)]
     pub fn journal_entries(&self) -> Vec<&JournalEntry> {
         self.journal.iter().collect()
     }
 
     /// Set identity
+    #[allow(dead_code)]
     pub fn set_identity(&mut self, identity: impl Into<String>) {
         self.identity = identity.into();
     }

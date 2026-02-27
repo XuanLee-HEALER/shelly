@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Memory entry for semantic memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +18,7 @@ pub struct MemoryEntry {
 
 impl MemoryEntry {
     /// Create a new memory entry
+    #[allow(dead_code)]
     pub fn new(content: String, embedding: Vec<f32>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),

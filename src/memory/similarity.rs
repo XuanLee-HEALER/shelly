@@ -1,6 +1,7 @@
 // Similarity functions for semantic retrieval
 
 /// Calculate cosine similarity between two vectors
+#[allow(dead_code)]
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.is_empty() || b.is_empty() {
         return 0.0;

@@ -6,14 +6,14 @@
 use clap::Parser;
 use rmp_serde::decode::Deserializer;
 use rmp_serde::encode::Serializer;
+use rustyline::Editor;
+use rustyline::history::FileHistory;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use rustyline::history::FileHistory;
-use rustyline::Editor;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
@@ -135,9 +135,7 @@ impl Client {
         // Send with retries
         for _attempt in 0..self.config.max_retries {
             // Send request
-            self.socket
-                .send_to(&packet, self.config.target)
-                .await?;
+            self.socket.send_to(&packet, self.config.target).await?;
 
             // Wait for ACK
             match self.wait_for_ack(seq).await {
@@ -204,9 +202,7 @@ impl Client {
         match timeout(Duration::from_secs(120), self.socket.recv_from(&mut buf)).await {
             Ok(Ok((len, addr))) => {
                 if addr != self.config.target {
-                    return Err(io::Error::other(
-                        "Unexpected sender",
-                    ));
+                    return Err(io::Error::other("Unexpected sender"));
                 }
 
                 if len < 5 {
@@ -235,10 +231,8 @@ impl Client {
 
                 // Deserialize payload
                 let mut de = Deserializer::new(&buf[5..len]);
-                let payload: ResponsePayload =
-                    Deserialize::deserialize(&mut de).map_err(|e| {
-                        io::Error::new(io::ErrorKind::InvalidData, e)
-                    })?;
+                let payload: ResponsePayload = Deserialize::deserialize(&mut de)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
                 Ok(payload)
             }
@@ -255,15 +249,17 @@ fn main() -> io::Result<()> {
 
     // Check locale
     if let Ok(lang) = std::env::var("LANG")
-        && !lang.to_lowercase().contains("utf-8") && !lang.to_lowercase().contains("utf8") {
-            eprintln!("[warning] Terminal locale is not UTF-8. Non-ASCII characters may not display correctly.");
-        }
+        && !lang.to_lowercase().contains("utf-8")
+        && !lang.to_lowercase().contains("utf8")
+    {
+        eprintln!(
+            "[warning] Terminal locale is not UTF-8. Non-ASCII characters may not display correctly."
+        );
+    }
 
     // Build runtime for async network operations
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        run_client(config).await
-    })
+    rt.block_on(async { run_client(config).await })
 }
 
 async fn run_client(config: Config) -> io::Result<()> {
@@ -271,15 +267,15 @@ async fn run_client(config: Config) -> io::Result<()> {
     let client = Client::new(config.clone()).await?;
 
     // Initialize rustyline with history
-    let mut rl: Editor<(), FileHistory> = Editor::new()
-        .map_err(io::Error::other)?;
+    let mut rl: Editor<(), FileHistory> = Editor::new().map_err(io::Error::other)?;
 
     // Load history from file
     if config.history_file.exists()
         && let Err(e) = rl.load_history(&config.history_file)
-            && config.history_file.exists() {
-                eprintln!("[warning] Failed to load history: {}", e);
-            }
+        && config.history_file.exists()
+    {
+        eprintln!("[warning] Failed to load history: {}", e);
+    }
 
     // Set max history size - truncate history file on load if too large
     // rustyline doesn't have a direct resize method, we handle this by limiting during save

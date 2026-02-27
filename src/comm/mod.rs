@@ -9,6 +9,6 @@ pub mod types;
 
 pub use config::CommConfig;
 pub use server::Comm;
-pub use types::UserResponse;
 #[allow(unused_imports)]
 pub use types::UserRequest;
+pub use types::UserResponse;

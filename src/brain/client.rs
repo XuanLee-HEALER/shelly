@@ -185,6 +185,3 @@ impl Brain {
         }
     }
 }
-
-unsafe impl Send for Brain {}
-unsafe impl Sync for Brain {}
