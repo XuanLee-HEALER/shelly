@@ -4,7 +4,7 @@
 pub mod config;
 
 use crate::brain::{
-    Brain, ContentBlock, Message, MessageRequest, RequestBuilder, Role, ToolDefinition,
+    Brain, ContentBlock, Message, RequestBuilder, Role,
 };
 use crate::comm::{UserRequest, UserResponse};
 use crate::executor::Executor;
@@ -83,37 +83,186 @@ impl AgentLoop {
         // Get tool definitions
         let tool_defs = self.executor.tool_definitions();
 
-        // Build initialization request
-        let mut request = self
-            .build_request(self.config.init_prompt.clone(), tool_defs.clone())
-            .map_err(AgentError::RequestBuild)?;
+        // Build system prompt with context (empty at init time)
+        let system = self.config.system_prompt.clone();
 
-        // Run inference with timeout
-        let result = timeout(
-            Duration::from_secs(self.config.init_timeout_secs),
-            self.brain.infer(request),
-        )
-        .await;
+        // Tool call loop for initialization
+        let mut tool_rounds = 0;
+        let mut messages: Vec<Message> = Vec::new();
 
-        match result {
-            Ok(Ok(response)) => {
-                info!(stop_reason = ?response.stop_reason, "Init inference completed");
+        // Add init message
+        messages.push(Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: self.config.init_prompt.clone(),
+            }],
+        });
 
-                // Handle tool calls
-                self.handle_inference_response(response, &tool_defs).await?;
-
-                info!("Agent initialization completed");
-                Ok(())
+        loop {
+            tool_rounds += 1;
+            if tool_rounds > self.config.max_tool_rounds {
+                warn!(rounds = tool_rounds, "Max tool rounds reached during init");
+                break;
             }
-            Ok(Err(e)) => {
-                error!(error = %e, "Init inference failed");
-                Err(AgentError::Inference(e.to_string()))
+
+            info!(round = tool_rounds, "Init inference round");
+
+            // Build request
+            let mut builder = RequestBuilder::new(self.brain.default_model().to_string())
+                .system(system.clone())
+                .max_tokens(self.brain.max_output_tokens());
+
+            // Add messages
+            for msg in &messages {
+                builder = match msg.role {
+                    Role::User => builder.user_content(msg.content.clone()),
+                    Role::Assistant => builder.assistant_content(msg.content.clone()),
+                };
             }
-            Err(_) => {
-                error!("Init inference timed out");
-                Err(AgentError::Timeout(self.config.init_timeout_secs))
+
+            // Add tools
+            builder = builder.tools(tool_defs.clone());
+
+            // Add inference parameters
+            if let Some(temp) = self.brain.temperature() {
+                builder = builder.temperature(temp);
+            }
+            if let Some(tp) = self.brain.top_p() {
+                builder = builder.top_p(tp);
+            }
+            if let Some(tk) = self.brain.top_k() {
+                builder = builder.top_k(tk);
+            }
+
+            let request = builder.build().map_err(AgentError::RequestBuild)?;
+
+            // Run inference with timeout
+            let result = timeout(
+                Duration::from_secs(self.config.init_timeout_secs),
+                self.brain.infer(request),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(response)) => {
+                    info!(stop_reason = ?response.stop_reason, "Init inference completed");
+
+                    // Extract text content
+                    let text_content: String = response
+                        .content
+                        .iter()
+                        .filter_map(|block| {
+                            if let ContentBlock::Text { text } = block {
+                                Some(text.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+
+                    // Record response in memory
+                    {
+                        let mut mem = self.memory.lock().await;
+                        mem.add_observation(&text_content);
+                    }
+
+                    // Check stop reason and handle tool calls
+                    match response.stop_reason {
+                        Some(crate::brain::types::StopReason::ToolUse) => {
+                            info!("Tool use detected in init");
+
+                            // Extract tool calls
+                            let tool_calls: Vec<ToolCall> = response
+                                .content
+                                .iter()
+                                .filter_map(|block| {
+                                    if let ContentBlock::ToolUse { id, name, input } = block {
+                                        Some(ToolCall {
+                                            id: id.clone(),
+                                            name: name.clone(),
+                                            input: input.clone(),
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+
+                            // Add assistant message with tool calls
+                            messages.push(Message {
+                                role: Role::Assistant,
+                                content: response.content.clone(),
+                            });
+
+                            // Execute each tool
+                            for call in tool_calls {
+                                info!(tool = %call.name, "Executing tool in init");
+                                match self.executor.execute(&call.name, call.input.clone()).await {
+                                    Ok(output) => {
+                                        let result_text = if output.is_error {
+                                            format!("Error: {}", output.content)
+                                        } else {
+                                            output.content
+                                        };
+
+                                        // Add tool result message
+                                        messages.push(Message {
+                                            role: Role::User,
+                                            content: vec![ContentBlock::ToolResult {
+                                                tool_use_id: call.id,
+                                                content: result_text.clone(),
+                                                is_error: Some(output.is_error),
+                                            }],
+                                        });
+
+                                        // Record in memory
+                                        let mut mem = self.memory.lock().await;
+                                        mem.add_tool_result(&call.name, &result_text);
+                                    }
+                                    Err(e) => {
+                                        error!(tool = %call.name, error = %e, "Tool execution failed");
+                                        let err_msg = format!("Error: {}", e);
+                                        messages.push(Message {
+                                            role: Role::User,
+                                            content: vec![ContentBlock::ToolResult {
+                                                tool_use_id: call.id,
+                                                content: err_msg.clone(),
+                                                is_error: Some(true),
+                                            }],
+                                        });
+
+                                        let mut mem = self.memory.lock().await;
+                                        mem.add_error(format!("{}: {}", call.name, e));
+                                    }
+                                }
+                            }
+                            // Continue loop to process more tool calls
+                        }
+                        Some(crate::brain::types::StopReason::MaxTokens) => {
+                            warn!("Init inference stopped due to max tokens");
+                            break;
+                        }
+                        _ => {
+                            // EndTurn or other - initialization complete
+                            info!("Init inference finished");
+                            break;
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    error!(error = %e, "Init inference failed");
+                    return Err(AgentError::Inference(e.to_string()));
+                }
+                Err(_) => {
+                    error!("Init inference timed out");
+                    return Err(AgentError::Timeout(self.config.init_timeout_secs));
+                }
             }
         }
+
+        info!("Agent initialization completed");
+        Ok(())
     }
 
     /// Run main loop - handles user requests
@@ -311,9 +460,19 @@ impl AgentLoop {
                         }
                     }
                 }
-                _ => {
-                    // EndTurn or other stop reason - return the response
+                Some(crate::brain::types::StopReason::MaxTokens) => {
+                    // MaxTokens - record warning and return current content as response
+                    warn!("Inference stopped due to max tokens limit");
+                    return Ok(text_content);
+                }
+                Some(crate::brain::types::StopReason::EndTurn) | None => {
+                    // EndTurn or None - return the response
                     info!(stop_reason = ?response.stop_reason, "Inference completed");
+                    return Ok(text_content);
+                }
+                Some(crate::brain::types::StopReason::StopSequence) => {
+                    // StopSequence - return current content
+                    info!(stop_reason = ?response.stop_reason, "Inference stopped by sequence");
                     return Ok(text_content);
                 }
             }
@@ -321,83 +480,6 @@ impl AgentLoop {
 
         // Max rounds reached
         Ok("Maximum tool call rounds reached. Operation aborted.".to_string())
-    }
-
-    /// Handle inference response (used in init phase)
-    async fn handle_inference_response(
-        &self,
-        response: crate::brain::MessageResponse,
-        tool_defs: &[ToolDefinition],
-    ) -> Result<(), AgentError> {
-        let text_content: String = response
-            .content
-            .iter()
-            .filter_map(|block| {
-                if let ContentBlock::Text { text } = block {
-                    Some(text.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        // Record initial response in memory
-        let mut mem = self.memory.lock().await;
-        mem.add_observation(&text_content);
-
-        // Handle tool calls if any
-        match response.stop_reason {
-            Some(crate::brain::types::StopReason::ToolUse) => {
-                let tool_calls: Vec<ToolCall> = response
-                    .content
-                    .iter()
-                    .filter_map(|block| {
-                        if let ContentBlock::ToolUse { id, name, input } = block {
-                            Some(ToolCall {
-                                id: id.clone(),
-                                name: name.clone(),
-                                input: input.clone(),
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                for call in tool_calls {
-                    match self.executor.execute(&call.name, call.input.clone()).await {
-                        Ok(output) => {
-                            mem.add_tool_result(&call.name, &output.content);
-                        }
-                        Err(e) => {
-                            mem.add_error(format!("{}: {}", call.name, e));
-                        }
-                    }
-                }
-            }
-            _ => {
-                // Just record the response
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Build request with tool definitions
-    fn build_request(
-        &self,
-        user_input: String,
-        tools: Vec<ToolDefinition>,
-    ) -> Result<MessageRequest, &'static str> {
-        let system = self.config.system_prompt.clone();
-
-        RequestBuilder::new(self.brain.default_model().to_string())
-            .system(system)
-            .user_text(user_input)
-            .max_tokens(self.brain.max_output_tokens())
-            .tools(tools)
-            .build()
     }
 
     /// Run shutdown handling
@@ -426,11 +508,6 @@ impl AgentLoop {
                 warn!("Shutdown handling timed out");
             }
         }
-    }
-
-    /// Get memory for debugging
-    pub async fn memory(&self) -> Arc<Mutex<Memory>> {
-        self.memory.clone()
     }
 }
 
