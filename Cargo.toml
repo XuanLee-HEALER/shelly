@@ -17,6 +17,11 @@ toml = { version = "1.0.3", features = ["serde"] }
 rmp-serde = "1"
 rmp = "0.8"
 
+# CLI dependencies
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+rustyline = "15"
+
 [dev-dependencies]
 tokio-test = "0.4"
 rand = "0.8"
@@ -28,3 +33,8 @@ path = "src/main.rs"
 [[bin]]
 name = "shelly-cli"
 path = "src/bin/shelly-cli.rs"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
