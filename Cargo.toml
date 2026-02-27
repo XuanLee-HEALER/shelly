@@ -17,6 +17,10 @@ toml = { version = "1.0.3", features = ["serde"] }
 rmp-serde = "1"
 rmp = "0.8"
 
+# Memory module dependencies
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
 # CLI dependencies
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
