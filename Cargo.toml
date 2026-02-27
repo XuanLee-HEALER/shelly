@@ -14,6 +14,17 @@ tracing-subscriber = "0.3"
 async-trait = "0.1"
 dotenvy = "0.15"
 toml = { version = "1.0.3", features = ["serde"] }
+rmp-serde = "1"
+rmp = "0.8"
 
 [dev-dependencies]
 tokio-test = "0.4"
+rand = "0.8"
+
+[[bin]]
+name = "shelly"
+path = "src/main.rs"
+
+[[bin]]
+name = "shelly-cli"
+path = "src/bin/shelly-cli.rs"
