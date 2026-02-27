@@ -26,10 +26,26 @@ test-verbose:
 
 # Run integration tests only (requires .env with INFERENCE_* vars)
 test-integration:
-    cargo test --test test_brain
+    cargo test --test test_brain --test test_executor
 
 # Run integration tests with output
 test-integration-verbose:
+    cargo test --test test_brain --test test_executor -- --nocapture
+
+# Run executor tests only
+test-executor:
+    cargo test --test test_executor
+
+# Run executor tests with output
+test-executor-verbose:
+    cargo test --test test_executor -- --nocapture
+
+# Run brain tests only
+test-brain:
+    cargo test --test test_brain
+
+# Run brain tests with output
+test-brain-verbose:
     cargo test --test test_brain -- --nocapture
 
 # Run unit tests only
