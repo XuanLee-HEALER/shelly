@@ -1,6 +1,6 @@
 // Agent configuration
 
-use super::AgentConfig;
+use super::types::AgentConfig;
 use tracing::warn;
 
 /// Parse an environment variable, logging a warning if the value is present but invalid.
