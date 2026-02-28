@@ -16,6 +16,7 @@ dotenvy = "0.15"
 toml = { version = "1.0.3", features = ["serde"] }
 rmp-serde = "1"
 rmp = "0.8"
+futures = "0.3"
 
 # Memory module dependencies
 uuid = { version = "1", features = ["v4", "serde"] }
