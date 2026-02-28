@@ -1,10 +1,12 @@
 use crate::comm::config::CommConfig;
 use crate::comm::error::{CommError, CommInitError};
-use crate::comm::protocol::{decode_header, decode_request_payload, encode_request_ack, encode_response};
+use crate::comm::protocol::{
+    decode_header, decode_request_payload, encode_request_ack, encode_response,
+};
 use crate::comm::types::{MsgType, ResponsePayload, UserRequest, UserResponse};
-use std::result::Result as StdResult;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
@@ -41,7 +43,9 @@ impl Comm {
 impl Comm {
     /// Create a new Comm instance and bind UDP socket
     /// Returns the comm instance and receiver for communication with main loop
-    pub async fn new(config: CommConfig) -> StdResult<(Comm, mpsc::Receiver<UserRequest>), CommInitError> {
+    pub async fn new(
+        config: CommConfig,
+    ) -> StdResult<(Comm, mpsc::Receiver<UserRequest>), CommInitError> {
         let socket = UdpSocket::bind(config.bind_addr())
             .await
             .map_err(|e| CommInitError::BindFailed(e.to_string()))?;
@@ -64,9 +68,9 @@ impl Comm {
     /// Run the Comm server
     pub async fn run(self) -> StdResult<(), CommError> {
         let mut buf = vec![0u8; self.config.max_payload_bytes + 1024]; // Extra space for header
+        let mut cleanup_interval = tokio::time::interval(Duration::from_secs(30));
 
         loop {
-            // Use tokio::select! to handle both recv and dedup cleanup
             tokio::select! {
                 result = self.socket.recv_from(&mut buf) => {
                     match result {
@@ -82,7 +86,7 @@ impl Comm {
                         }
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                _ = cleanup_interval.tick() => {
                     // Periodic cleanup of dedup table
                     self.cleanup_dedup().await;
                 }
@@ -98,14 +102,21 @@ impl Comm {
     ) -> StdResult<(), CommError> {
         // Check for truncated packet (minimum: type + seq = 5 bytes)
         if packet.len() < 5 {
-            warn!("Truncated packet from {}: only {} bytes", client_addr, packet.len());
+            warn!(
+                "Truncated packet from {}: only {} bytes",
+                client_addr,
+                packet.len()
+            );
             return Err(CommError::DecodeError("Packet too short".to_string()));
         }
 
         // Check payload size
         let payload_len = packet.len() - 5;
         if payload_len > self.config.max_payload_bytes {
-            warn!("Payload too large from {}: {} bytes", client_addr, payload_len);
+            warn!(
+                "Payload too large from {}: {} bytes",
+                client_addr, payload_len
+            );
             return Err(CommError::PayloadTooLarge(payload_len));
         }
 
@@ -113,14 +124,18 @@ impl Comm {
         let (msg_type, seq) = decode_header(packet)?;
         let payload = &packet[5..];
 
-        debug!("Received {} from {} seq={}", msg_type as u8, client_addr, seq);
+        debug!(
+            "Received {} from {} seq={}",
+            msg_type as u8, client_addr, seq
+        );
 
         match msg_type {
-            MsgType::Request => {
-                self.handle_request(payload, seq, client_addr).await
-            }
+            MsgType::Request => self.handle_request(payload, seq, client_addr).await,
             _ => {
-                warn!("Unexpected message type: {} from {}", msg_type as u8, client_addr);
+                warn!(
+                    "Unexpected message type: {} from {}",
+                    msg_type as u8, client_addr
+                );
                 Ok(())
             }
         }
@@ -141,131 +156,164 @@ impl Comm {
             // T-EDGE-07: Enforce capacity limit
             if client_entries.len() >= self.config.dedup_capacity {
                 // Remove oldest entry to make room
-                let oldest_seq = client_entries.iter()
+                let oldest_seq = client_entries
+                    .iter()
                     .min_by_key(|(_, e)| e.instant)
                     .map(|(seq, _)| *seq);
                 if let Some(seq_to_remove) = oldest_seq {
                     client_entries.remove(&seq_to_remove);
-                    debug!("Dedup table at capacity, removed oldest entry seq={}", seq_to_remove);
+                    debug!(
+                        "Dedup table at capacity, removed oldest entry seq={}",
+                        seq_to_remove
+                    );
                 }
             }
 
-            if client_entries.contains_key(&seq) {
-                // Duplicate - return cached response if available
-                let entry = client_entries.get(&seq).unwrap();
-                if let Some(ref cached) = entry.cached_response {
-                    info!("Duplicate request seq={} from {}, resending cached response", seq, client_addr);
-                    let cached_clone = cached.clone();
-                    drop(dedup); // Release lock before sending
-                    self.socket.send_to(&cached_clone, client_addr).await
-                        .map_err(|e| CommError::SendError(e.to_string()))?;
-                } else {
-                    // No cached response yet (original request still being processed)
-                    // Send ACK to indicate we're still working on it
-                    debug!("Duplicate request seq={} from {}, no cached response yet, sending ACK", seq, client_addr);
-                    let ack = encode_request_ack(seq)?;
-                    drop(dedup);
-                    self.socket.send_to(&ack, client_addr).await
-                        .map_err(|e| CommError::SendError(e.to_string()))?;
+            match client_entries.entry(seq) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Duplicate - return cached response if available
+                    if let Some(ref cached) = entry.get().cached_response {
+                        info!(
+                            "Duplicate request seq={} from {}, resending cached response",
+                            seq, client_addr
+                        );
+                        let cached_clone = cached.clone();
+                        drop(dedup); // Release lock before sending
+                        self.socket
+                            .send_to(&cached_clone, client_addr)
+                            .await
+                            .map_err(|e| CommError::SendError(e.to_string()))?;
+                    } else {
+                        // No cached response yet (original request still being processed)
+                        // Send ACK to indicate we're still working on it
+                        debug!(
+                            "Duplicate request seq={} from {}, no cached response yet, sending ACK",
+                            seq, client_addr
+                        );
+                        let ack = encode_request_ack(seq)?;
+                        drop(dedup);
+                        self.socket
+                            .send_to(&ack, client_addr)
+                            .await
+                            .map_err(|e| CommError::SendError(e.to_string()))?;
+                    }
+                    true
                 }
-                true
-            } else {
-                // New request - create dedup entry immediately (before processing)
-                // This ensures duplicate requests during processing are recognized
-                client_entries.insert(seq, DedupEntry {
-                    instant: Instant::now(),
-                    cached_response: None,
-                });
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // New request - create dedup entry immediately (before processing)
+                    // This ensures duplicate requests during processing are recognized
+                    entry.insert(DedupEntry {
+                        instant: Instant::now(),
+                        cached_response: None,
+                    });
 
-                // Decode payload
-                let request_payload = decode_request_payload(payload_bytes)?;
+                    // Decode payload
+                    let request_payload = decode_request_payload(payload_bytes)?;
 
-                info!("New request seq={} from {} content_len={}",
-                    seq, client_addr, request_payload.content.len());
+                    info!(
+                        "New request seq={} from {} content_len={}",
+                        seq,
+                        client_addr,
+                        request_payload.content.len()
+                    );
 
-                // Send ACK immediately
-                let ack = encode_request_ack(seq)?;
-                self.socket.send_to(&ack, client_addr).await
-                    .map_err(|e| CommError::SendError(e.to_string()))?;
-                debug!("Sent REQUEST_ACK seq={} to {}", seq, client_addr);
+                    // Send ACK immediately
+                    let ack = encode_request_ack(seq)?;
+                    self.socket
+                        .send_to(&ack, client_addr)
+                        .await
+                        .map_err(|e| CommError::SendError(e.to_string()))?;
+                    debug!("Sent REQUEST_ACK seq={} to {}", seq, client_addr);
 
-                // Create channel for response
-                let (reply_tx, reply_rx) = oneshot::channel::<UserResponse>();
+                    // Create channel for response
+                    let (reply_tx, reply_rx) = oneshot::channel::<UserResponse>();
 
-                // Send request to main loop
-                let user_request = UserRequest {
-                    content: request_payload.content,
-                    reply: reply_tx,
-                    source_addr: client_addr,
-                };
+                    // Send request to main loop
+                    let user_request = UserRequest {
+                        content: request_payload.content,
+                        reply: reply_tx,
+                        source_addr: client_addr,
+                    };
 
-                // Drop dedup lock before sending to main loop and waiting for response
-                drop(dedup);
-                let send_result = self.loop_sender.send(user_request).await;
+                    // Drop dedup lock before sending to main loop and waiting for response
+                    drop(dedup);
+                    let send_result = self.loop_sender.send(user_request).await;
 
-                match send_result {
-                    Ok(_) => {
-                        // Wait for response from main loop
-                        match timeout(Duration::from_secs(300), reply_rx).await {
-                            Ok(Ok(response)) => {
-                                // Send response to client
-                                let response_payload = ResponsePayload {
-                                    content: response.content,
-                                    is_error: response.is_error,
-                                };
-                                let response_bytes = encode_response(seq, &response_payload)?;
-                                self.socket.send_to(&response_bytes, client_addr).await
-                                    .map_err(|e| CommError::SendError(e.to_string()))?;
+                    match send_result {
+                        Ok(_) => {
+                            // Wait for response from main loop
+                            match timeout(Duration::from_secs(300), reply_rx).await {
+                                Ok(Ok(response)) => {
+                                    // Send response to client
+                                    let response_payload = ResponsePayload {
+                                        content: response.content,
+                                        is_error: response.is_error,
+                                    };
+                                    let response_bytes = encode_response(seq, &response_payload)?;
+                                    self.socket
+                                        .send_to(&response_bytes, client_addr)
+                                        .await
+                                        .map_err(|e| CommError::SendError(e.to_string()))?;
 
-                                // Cache the response for deduplication
-                                let mut dedup = self.dedup.lock().await;
-                                if let Some(client_entries) = dedup.get_mut(&client_addr) {
-                                    client_entries.insert(seq, DedupEntry {
-                                        instant: Instant::now(),
-                                        cached_response: Some(response_bytes),
-                                    });
+                                    // Cache the response for deduplication
+                                    let mut dedup = self.dedup.lock().await;
+                                    if let Some(client_entries) = dedup.get_mut(&client_addr) {
+                                        client_entries.insert(
+                                            seq,
+                                            DedupEntry {
+                                                instant: Instant::now(),
+                                                cached_response: Some(response_bytes),
+                                            },
+                                        );
+                                    }
+                                    debug!("Sent RESPONSE seq={} to {}", seq, client_addr);
                                 }
-                                debug!("Sent RESPONSE seq={} to {}", seq, client_addr);
-                            }
-                            Ok(Err(_)) => {
-                                // Channel closed without response
-                                warn!("Channel closed without response for seq={}", seq);
-                                let error_payload = ResponsePayload {
-                                    content: "No response from handler".to_string(),
-                                    is_error: true,
-                                };
-                                let response_bytes = encode_response(seq, &error_payload)?;
-                                self.socket.send_to(&response_bytes, client_addr).await
-                                    .map_err(|e| CommError::SendError(e.to_string()))?;
-                            }
-                            Err(_) => {
-                                // Timeout waiting for response
-                                warn!("Timeout waiting for response for seq={}", seq);
-                                let error_payload = ResponsePayload {
-                                    content: "Response timeout".to_string(),
-                                    is_error: true,
-                                };
-                                let response_bytes = encode_response(seq, &error_payload)?;
-                                self.socket.send_to(&response_bytes, client_addr).await
-                                    .map_err(|e| CommError::SendError(e.to_string()))?;
+                                Ok(Err(_)) => {
+                                    // Channel closed without response
+                                    warn!("Channel closed without response for seq={}", seq);
+                                    let error_payload = ResponsePayload {
+                                        content: "No response from handler".to_string(),
+                                        is_error: true,
+                                    };
+                                    let response_bytes = encode_response(seq, &error_payload)?;
+                                    self.socket
+                                        .send_to(&response_bytes, client_addr)
+                                        .await
+                                        .map_err(|e| CommError::SendError(e.to_string()))?;
+                                }
+                                Err(_) => {
+                                    // Timeout waiting for response
+                                    warn!("Timeout waiting for response for seq={}", seq);
+                                    let error_payload = ResponsePayload {
+                                        content: "Response timeout".to_string(),
+                                        is_error: true,
+                                    };
+                                    let response_bytes = encode_response(seq, &error_payload)?;
+                                    self.socket
+                                        .send_to(&response_bytes, client_addr)
+                                        .await
+                                        .map_err(|e| CommError::SendError(e.to_string()))?;
+                                }
                             }
                         }
+                        Err(e) => {
+                            error!("Failed to send request to main loop: {}", e);
+                            // Send error response to client
+                            let error_payload = ResponsePayload {
+                                content: "Internal server error".to_string(),
+                                is_error: true,
+                            };
+                            let response = encode_response(seq, &error_payload)?;
+                            self.socket
+                                .send_to(&response, client_addr)
+                                .await
+                                .map_err(|e| CommError::SendError(e.to_string()))?;
+                            return Err(CommError::ChannelClosed);
+                        }
                     }
-                    Err(e) => {
-                        error!("Failed to send request to main loop: {}", e);
-                        // Send error response to client
-                        let error_payload = ResponsePayload {
-                            content: "Internal server error".to_string(),
-                            is_error: true,
-                        };
-                        let response = encode_response(seq, &error_payload)?;
-                        self.socket.send_to(&response, client_addr).await
-                            .map_err(|e| CommError::SendError(e.to_string()))?;
-                        return Err(CommError::ChannelClosed);
-                    }
-                }
 
-                return Ok(());
+                    return Ok(());
+                }
             }
         };
 

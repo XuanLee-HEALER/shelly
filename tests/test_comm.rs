@@ -93,7 +93,9 @@ mod integration_tests {
         // Spawn mock main loop with receiver
         let mock_handle = tokio::spawn(async move {
             if let Some(req) = loop_rx.recv().await {
-                req.reply.send(comm::UserResponse::new("hello".to_string())).ok();
+                req.reply
+                    .send(comm::UserResponse::new("hello".to_string()))
+                    .ok();
             }
         });
 
@@ -201,7 +203,9 @@ mod integration_tests {
 
         // Count received messages in main loop
         let mut received = Vec::new();
-        while let Ok(Some(content)) = tokio::time::timeout(Duration::from_millis(100), req_rx.recv()).await {
+        while let Ok(Some(content)) =
+            tokio::time::timeout(Duration::from_millis(100), req_rx.recv()).await
+        {
             received.push(content);
         }
 
@@ -285,7 +289,8 @@ mod integration_tests {
 
         // Receiving should timeout
         let mut buf = [0u8; 1024];
-        let result = tokio::time::timeout(Duration::from_millis(100), client.recv_from(&mut buf)).await;
+        let result =
+            tokio::time::timeout(Duration::from_millis(100), client.recv_from(&mut buf)).await;
         assert!(result.is_err()); // Timeout
     }
 }

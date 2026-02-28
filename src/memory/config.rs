@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Memory configuration
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MemoryConfig {
     /// Storage directory
     pub storage_dir: PathBuf,

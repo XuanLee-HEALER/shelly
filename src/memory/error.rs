@@ -4,6 +4,8 @@ use thiserror::Error;
 
 /// Memory errors
 #[derive(Debug, Error)]
+#[allow(dead_code)]
+#[allow(clippy::enum_variant_names)]
 pub enum MemoryError {
     #[error("Failed to load memory: {0}")]
     LoadFailed(String),

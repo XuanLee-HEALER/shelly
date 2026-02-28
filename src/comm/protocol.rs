@@ -23,7 +23,8 @@ pub fn encode_packet(
     // Write payload if present
     if let Some(p) = payload {
         let mut ser = Serializer::new(&mut buf);
-        p.serialize(&mut ser).map_err(|e| CommError::EncodeError(e.to_string()))?;
+        p.serialize(&mut ser)
+            .map_err(|e| CommError::EncodeError(e.to_string()))?;
     }
 
     Ok(buf)
@@ -32,9 +33,7 @@ pub fn encode_packet(
 /// Decode packet type and seq from raw bytes
 pub fn decode_header(data: &[u8]) -> StdResult<(MsgType, u32), CommError> {
     if data.len() < 5 {
-        return Err(CommError::DecodeError(
-            "Packet too short".to_string(),
-        ));
+        return Err(CommError::DecodeError("Packet too short".to_string()));
     }
 
     let msg_type = MsgType::from_u8(data[0])
@@ -209,7 +208,10 @@ mod tests {
         let (_, seq) = decode_header(&packet).unwrap();
         assert_eq!(seq, 256);
         // Check big-endian encoding: 256 = 0x00000100
-        assert_eq!([packet[1], packet[2], packet[3], packet[4]], [0x00, 0x00, 0x01, 0x00]);
+        assert_eq!(
+            [packet[1], packet[2], packet[3], packet[4]],
+            [0x00, 0x00, 0x01, 0x00]
+        );
     }
 
     // T-CODEC-11: payload 含特殊字符

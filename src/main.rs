@@ -11,7 +11,7 @@ use comm::{Comm, CommConfig};
 use executor::{Executor, ExecutorConfig};
 use std::process;
 use tokio::signal;
-use tracing::{error, info, Level};
+use tracing::{Level, error, info};
 use tracing_subscriber::fmt;
 
 /// Tokio runtime with signal handling
@@ -50,7 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize executor
     let executor = Executor::new(executor_config);
-    info!(tools = executor.tool_definitions().len(), "Executor initialized");
+    info!(
+        tools = executor.tool_definitions().len(),
+        "Executor initialized"
+    );
 
     // Initialize agent loop
     let agent = AgentLoop::new(brain, executor, agent_config);

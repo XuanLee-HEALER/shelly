@@ -3,11 +3,8 @@
 
 pub mod config;
 pub mod error;
-pub mod storage;
 pub mod similarity;
+pub mod storage;
 pub mod types;
 
-pub use config::MemoryConfig;
-pub use error::MemoryError;
 pub use storage::Memory;
-pub use types::{JournalEntry, MemoryEntry};
